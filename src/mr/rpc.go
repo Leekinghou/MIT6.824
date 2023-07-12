@@ -49,7 +49,7 @@ type State int
 const (
 	MapTask TaskType = iota
 	ReduceTask
-	WaitTask // Waittingen任务代表此时为任务都分发完了，但是任务还没完成，阶段未改变
+	WaitTask // Waiting任务代表此时为任务都分发完了，但是任务还没完成，阶段未改变
 	ExitTask // exit
 )
 

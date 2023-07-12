@@ -90,6 +90,8 @@ func (c *Coordinator) makeMapTasks(files []string) {
 		c.taskMetaHolder.acceptMeta(&taskMetaInfo)
 
 		// 将任务放到Map管道中
+		fmt.Printf("[%s] make a [map] task Task-ID: [%d]\n", time.Now().Format("2006-01-02 15:04:05"),
+			task.TaskId)
 		//fmt.Println("make a map task: ", &task)
 		c.MapTaskChannel <- &task
 	}
@@ -148,6 +150,71 @@ func (c *Coordinator) makeReduceTasks() {
 	}
 }
 
+// PollTask 核心的方法: 分配任务
+func (c *Coordinator) PollTask(args *TaskArgs, reply *Task) error {
+	// 1. 将map任务管道中的任务取出
+	// 分发任务应该上锁，防止多个worker竞争，并用defer回退解锁
+	mu.Lock()
+	defer mu.Unlock()
+
+	// 判断任务类型，存任务
+	switch c.DistPhase {
+	case MapPhase:
+		if len(c.MapTaskChannel) > 0 {
+			*reply = *<-c.MapTaskChannel
+			// fmt.Printf("poll-Map-taskid[ %d ]\n", reply.TaskId)
+			if !c.taskMetaHolder.judgeState(reply.TaskId) {
+				fmt.Printf("[Map] task Task-id[%d] is running\n", reply.TaskId)
+			}
+		} else {
+			// 如果map任务被分发完了但是又没完成，此时就将任务设为WaitTask
+			reply.TaskType = WaitTask
+			if c.taskMetaHolder.checkTaskDone() {
+				c.toNextPhase()
+			}
+			return nil
+		}
+	case ReducePhase:
+		if len(c.ReduceTaskChannel) > 0 {
+			*reply = *<-c.ReduceTaskChannel
+			//fmt.Printf("poll-Reduce-taskid[ %d ]\n", reply.TaskId)
+			if !c.taskMetaHolder.judgeState(reply.TaskId) {
+				fmt.Printf("[Reduce] task Task-id[%d] is running\n", reply.TaskId)
+			}
+		} else {
+			// 如果map任务被分发完了但是又没完成，此时就将任务设为WaitTask
+			reply.TaskType = WaitTask
+			if c.taskMetaHolder.checkTaskDone() {
+				c.toNextPhase()
+			}
+			return nil
+		}
+	case AllDone:
+		reply.TaskType = ExitTask
+	default:
+		panic("The phase undefined ! ! !")
+	}
+	return nil
+}
+
+// 将接受taskMetaInfo储存进MetaHolder里
+func (t *TaskMetaHolder) acceptMeta(taskInfo *TaskMetaInfo) bool {
+	taskId := taskInfo.TaskAddr.TaskId
+	meta, _ := t.MetaMap[taskId]
+	if meta != nil {
+		fmt.Printf("[%s] task already exist, existed id is: [%d]\n",
+			time.Now().Format("2006-01-02 15:04:05"),
+			taskId)
+		return false
+	} else {
+		//fmt.Printf("[%s] accept a new task, task-id is: [%d]\n",
+		//	time.Now().Format("2006-01-02 15:04:05"),
+		//	taskId)
+		t.MetaMap[taskId] = taskInfo
+		return true
+	}
+}
+
 // 拼接字符串：读文件名
 func selectReduceName(reduceNum int) []string {
 	var s []string
@@ -165,66 +232,6 @@ func selectReduceName(reduceNum int) []string {
 		}
 	}
 	return s
-}
-
-// 将接受taskMetaInfo储存进MetaHolder里
-func (t *TaskMetaHolder) acceptMeta(taskInfo *TaskMetaInfo) bool {
-	taskId := taskInfo.TaskAddr.TaskId
-	meta, _ := t.MetaMap[taskId]
-	if meta != nil {
-		fmt.Println("task already exist, existed id is: ", taskId)
-		return false
-	} else {
-		t.MetaMap[taskId] = taskInfo
-		return true
-	}
-}
-
-// PollTask 核心的方法: 分配任务
-func (c *Coordinator) PollTask(args *TaskArgs, reply *Task) error {
-	// 1. 将map任务管道中的任务取出
-	// 分发任务应该上锁，防止多个worker竞争，并用defer回退解锁
-	mu.Lock()
-	defer mu.Unlock()
-
-	// 判断任务类型，存任务
-	switch c.DistPhase {
-	case MapPhase:
-		if len(c.MapTaskChannel) > 0 {
-			*reply = *<-c.MapTaskChannel
-			//fmt.Printf("poll-Map-taskid[ %d ]\n", reply.TaskId)
-			if !c.taskMetaHolder.judgeState(reply.TaskId) {
-				fmt.Printf("Map taskid[ %d ] is running\n", reply.TaskId)
-			}
-		} else {
-			// 如果map任务被分发完了但是又没完成，此时就将任务设为WaitTask
-			reply.TaskType = WaitTask
-			if c.taskMetaHolder.checkTaskDone() {
-				c.toNextPhase()
-			}
-			return nil
-		}
-	case ReducePhase:
-		if len(c.ReduceTaskChannel) > 0 {
-			*reply = *<-c.ReduceTaskChannel
-			//fmt.Printf("poll-Reduce-taskid[ %d ]\n", reply.TaskId)
-			if !c.taskMetaHolder.judgeState(reply.TaskId) {
-				fmt.Printf("Reduce-taskid[ %d ] is running\n", reply.TaskId)
-			}
-		} else {
-			// 如果map任务被分发完了但是又没完成，此时就将任务设为WaitTask
-			reply.TaskType = WaitTask
-			if c.taskMetaHolder.checkTaskDone() {
-				c.toNextPhase()
-			}
-			return nil
-		}
-	case AllDone:
-		reply.TaskType = ExitTask
-	default:
-		panic("The phase undefined ! ! !")
-	}
-	return nil
 }
 
 // 分配任务中转换阶段
@@ -268,14 +275,15 @@ func (t *TaskMetaHolder) checkTaskDone() bool {
 	// 如果某一个map或者reduce全部做完了，代表需要切换下一阶段，返回true
 
 	// Map
-	if (mapDoneNum > 0 && mapNotDoneNum == 0) && (reduceDoneNum == 0 && reduceNotDoneNum == 0) {
-		return true
-	} else {
-		if reduceDoneNum > 0 && reduceNotDoneNum == 0 {
-			return true
-		}
-	}
-	return false
+	//if (mapDoneNum > 0 && mapNotDoneNum == 0) && (reduceDoneNum == 0 && reduceNotDoneNum == 0) {
+	//	return true
+	//} else {
+	//	if reduceDoneNum > 0 && reduceNotDoneNum == 0 {
+	//		return true
+	//	}
+	//}
+	return (mapDoneNum > 0 && mapNotDoneNum == 0 && reduceDoneNum == 0 && reduceNotDoneNum == 0) ||
+		(reduceDoneNum > 0 && reduceNotDoneNum == 0)
 }
 
 // 判断给定任务是否在工作，并修正其目前任务信息状态,如果任务不在工作的话返回true
