@@ -79,6 +79,16 @@ func coordinatorSock() string {
 	return s
 }
 
+func TaskTypeLog(taskType TaskType) string {
+	if taskType == 0 {
+		return "map"
+	} else if taskType == 1 {
+		return "reduce"
+	} else {
+		return "Unknown"
+	}
+}
+
 type MyEnum TaskType
 
 const (

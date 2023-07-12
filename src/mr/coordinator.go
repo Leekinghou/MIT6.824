@@ -116,9 +116,11 @@ func (c *Coordinator) CrashDetector() {
 
 				switch v.TaskAddr.TaskType {
 				case MapTask:
+					fmt.Printf("任务 [%d] 重新进入mapTask通道", v.TaskAddr.TaskId)
 					c.MapTaskChannel <- v.TaskAddr
 					v.state = Waiting
 				case ReduceTask:
+					fmt.Printf("任务 [%d] 重新进入reduceTask通道", v.TaskAddr.TaskId)
 					c.ReduceTaskChannel <- v.TaskAddr
 					v.state = Waiting
 				}
@@ -132,6 +134,7 @@ func (c *Coordinator) CrashDetector() {
 func (c *Coordinator) makeReduceTasks() {
 	for i := 0; i < c.ReducerNumber; i++ {
 		id := c.generateTaskId()
+
 		task := Task{
 			TaskId:    id,
 			TaskType:  ReduceTask,
@@ -207,9 +210,9 @@ func (t *TaskMetaHolder) acceptMeta(taskInfo *TaskMetaInfo) bool {
 			taskId)
 		return false
 	} else {
-		//fmt.Printf("[%s] accept a new task, task-id is: [%d]\n",
-		//	time.Now().Format("2006-01-02 15:04:05"),
-		//	taskId)
+		fmt.Printf("[%s] accept a new task, task-id is: [%d]\n",
+			time.Now().Format("2006-01-02 15:04:05"),
+			taskId)
 		t.MetaMap[taskId] = taskInfo
 		return true
 	}
@@ -282,6 +285,8 @@ func (t *TaskMetaHolder) checkTaskDone() bool {
 	//		return true
 	//	}
 	//}
+	// return false
+
 	return (mapDoneNum > 0 && mapNotDoneNum == 0 && reduceDoneNum == 0 && reduceNotDoneNum == 0) ||
 		(reduceDoneNum > 0 && reduceNotDoneNum == 0)
 }
@@ -338,7 +343,10 @@ func (c *Coordinator) MarkFinished(args *Task, reply *Task) error {
 	meta, ok := c.taskMetaHolder.MetaMap[args.TaskId]
 	if ok && meta.state == Working {
 		meta.state = Done
-		//fmt.Printf("[%v] %v task[%d] is done\n", time.Now().Format("2006-01-02 15:04:05"), taskTypeToString(MyEnum(args.TaskType)), args.TaskId)
+		fmt.Printf("[%v] [%v] task-id[%d] is done\n",
+			time.Now().Format("2006-01-02 15:04:05"),
+			TaskTypeLog(args.TaskType),
+			args.TaskId)
 	} else {
 		fmt.Printf("[%v] undefined task[%d] is already done\n", time.Now().Format("2006-01-02 15:04:05"), args.TaskId)
 	}
@@ -354,7 +362,7 @@ func (c *Coordinator) Done() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	if c.DistPhase == AllDone {
-		//fmt.Printf("All tasks has been done! The coordinator will be exit\n")
+		fmt.Printf("All tasks has been done! The coordinator will be exit\n")
 		ret = true
 	}
 	return ret
